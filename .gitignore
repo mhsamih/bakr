@@ -1,44 +1,56 @@
 ```
-# Dependencies
-node_modules/
-.pnpm-store/
-
-# Build outputs
-dist/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
 build/
-.next/
-.nuxt/
-public/dist/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Cache directories
-.cache/
-.tmp/
-.temp/
+# Virtual environments
+venv/
+ENV/
+env.bak/
+.venv/
 
-# Environment variables
-.env
-.env.local
-.env.*
-!.env.example
-
-# Logs
-*.log
-
-# OS generated files
-.DS_Store
-Thumbs.db
-
-# IDE files
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Prisma
-prisma/migrations/
-prisma/sqlite.db
-prisma/sqlite.db-journal
+# Logs
+*.log
 
-# TypeScript
-*.tsbuildinfo
+# Environment variables
+.env
+.env.local
+*.env.*
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Temporary files
+*.tmp
+.DS_Store
+Thumbs.db
+
+# MyPy
+.mypy_cache/
 ```
