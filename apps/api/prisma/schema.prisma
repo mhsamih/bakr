@@ -1,5 +1,6 @@
 // CMMS Platform Database Schema
-// Modular architecture supporting future expansion
+// Comprehensive Preventive Maintenance Management System
+// Supports general-purpose facility maintenance (hospitals, schools, hotels, factories, etc.)
 
 generator client {
   provider = "prisma-client-js"
@@ -21,9 +22,11 @@ model User {
   firstName     String
   lastName      String
   phone         String?
+  whatsapp      String?   // For WhatsApp notifications
   avatar        String?
   role          Role      @default(TECHNICIAN)
   department    String?
+  specialization String?  // HVAC, Electrical, Mechanical, etc.
   isActive      Boolean   @default(true)
   emailVerified Boolean   @default(false)
   lastLogin     DateTime?
@@ -39,6 +42,7 @@ model User {
   activityLogs           ActivityLog[]
   technicianProfile      TechnicianProfile?
   refreshToken           RefreshToken?
+  signatures             Signature[]
 
   @@index([email])
   @@index([role])
@@ -46,11 +50,10 @@ model User {
 }
 
 enum Role {
-  ADMIN
-  MAINTENANCE_MANAGER
-  SUPERVISOR
-  TECHNICIAN
-  REQUESTER
+  SUPER_ADMIN           // Full access + user management
+  MAINTENANCE_ENGINEER  // Dashboard + reports + assign tasks
+  TECHNICIAN            // View own tasks + update status
+  VIEWER                // Read-only access
 }
 
 model RefreshToken {
@@ -63,6 +66,82 @@ model RefreshToken {
 
   @@index([token])
   @@map("refresh_tokens")
+}
+
+// Digital Signatures for Work Orders
+model Signature {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  signatureImage String?
+  fullName    String
+  title       String   // Technician / Engineer / Manager
+  createdAt   DateTime @default(now())
+
+  workOrderTechnician WorkOrder[] @relation("TechnicianSignature")
+  workOrderEngineer   WorkOrder[] @relation("EngineerSignature")
+  workOrderManager    WorkOrder[] @relation("ManagerSignature")
+
+  @@map("signatures")
+}
+
+// ============================================
+// DEPARTMENT & LOCATION MANAGEMENT
+// ============================================
+
+model Department {
+  id          String   @id @default(uuid())
+  name        String
+  code        String   @unique
+  description String?
+  parentId    String?
+  parent      Department? @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children    Department[] @relation("DepartmentHierarchy")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  facilities  Facility[]
+  equipment   Equipment[]
+  users       User[]
+  workOrders  WorkOrder[]
+
+  @@index([code])
+  @@map("departments")
+}
+
+model Facility {
+  id          String   @id @default(uuid())
+  name        String
+  code        String   @unique
+  address     String?
+  city        String?
+  country     String?
+  type        FacilityType @default(GENERAL)
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+  buildings    Building[]
+  assets       Asset[]
+  workOrders   WorkOrder[]
+
+  @@index([code])
+  @@map("facilities")
+}
+
+enum FacilityType {
+  HOSPITAL
+  SCHOOL
+  HOTEL
+  FACTORY
+  RESIDENTIAL
+  GOVERNMENT
+  COMMERCIAL
+  GENERAL
 }
 
 // ============================================
@@ -83,6 +162,8 @@ model TechnicianProfile {
   hireDate       DateTime?
   rating         Float    @default(0.0)
   completedTasks Int      @default(0)
+  avgCompletionTime Float @default(0.0) // in minutes
+  onTimeRate     Float    @default(100.0) // percentage
 
   @@map("technician_profiles")
 }
@@ -95,11 +176,13 @@ enum Availability {
 }
 
 // ============================================
-// ASSET MANAGEMENT MODULE
+// ASSET & EQUIPMENT MANAGEMENT MODULE
 // ============================================
 
 model Building {
   id          String   @id @default(uuid())
+  facilityId  String?
+  facility    Facility? @relation(fields: [facilityId], references: [id])
   name        String
   code        String   @unique
   address     String?
@@ -112,6 +195,7 @@ model Building {
 
   floors      Floor[]
   assets      Asset[]
+  equipment   Equipment[]
   workOrders  WorkOrder[]
 
   @@index([code])
@@ -130,6 +214,7 @@ model Floor {
 
   rooms       Room[]
   assets      Asset[]
+  equipment   Equipment[]
 
   @@unique([buildingId, level])
   @@index([buildingId])
@@ -148,6 +233,7 @@ model Room {
   updatedAt   DateTime @updatedAt
 
   assets      Asset[]
+  equipment   Equipment[]
 
   @@index([floorId])
   @@map("rooms")
@@ -156,17 +242,21 @@ model Room {
 model AssetCategory {
   id          String   @id @default(uuid())
   name        String
+  nameAr      String?  // Arabic name
   code        String   @unique
   parentId    String?
   parent      AssetCategory? @relation("CategoryHierarchy", fields: [parentId], references: [id])
   children    AssetCategory[] @relation("CategoryHierarchy")
   description String?
   icon        String?
+  color       String?  // For calendar display
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   assets      Asset[]
+  equipment   Equipment[]
   pmTemplates PMTemplate[]
+  checklists  ChecklistTemplate[]
 
   @@index([code])
   @@map("asset_categories")
@@ -176,6 +266,7 @@ model Asset {
   id                String       @id @default(uuid())
   assetId           String       @unique
   name              String
+  nameAr            String?      // Arabic name
   categoryId        String?
   category          AssetCategory? @relation(fields: [categoryId], references: [id])
   model             String?
@@ -194,6 +285,8 @@ model Asset {
   documents         String[]
   
   // Location
+  facilityId        String?
+  facility          Facility?    @relation(fields: [facilityId], references: [id])
   buildingId        String?
   building          Building?    @relation(fields: [buildingId], references: [id])
   floorId           String?
@@ -267,13 +360,123 @@ model MaintenanceRecord {
 }
 
 // ============================================
+// EQUIPMENT MODULE (for detailed equipment tracking)
+// ============================================
+
+model Equipment {
+  id                String       @id @default(uuid())
+  equipmentId       String       @unique  // EQ-YYYY-XXXX format
+  name              String
+  nameAr            String?      // Arabic name
+  categoryId        String?
+  category          AssetCategory? @relation(fields: [categoryId], references: [id])
+  
+  // Technical details
+  model             String?
+  serialNumber      String?
+  manufacturer      String?
+  brand             String?
+  
+  // Location hierarchy
+  facilityId        String?
+  facility          Facility?    @relation(fields: [facilityId], references: [id])
+  buildingId        String?
+  building          Building?    @relation(fields: [buildingId], references: [id])
+  floorId           String?
+  floor             Floor?       @relation(fields: [floorId], references: [id])
+  roomId            String?
+  room              Room?        @relation(fields: [roomId], references: [id])
+  subLocation       String?      // Specific area/zone
+  locationDetails   String?
+  
+  // Purchase & warranty
+  purchaseDate      DateTime?
+  warrantyExpiration DateTime?
+  assetTag          String?      // Barcode/Asset tag
+  purchasePrice     Float?
+  
+  // PM Schedule
+  pmFrequency       PMFrequency  @default(MONTHLY)
+  pmInterval        Int          @default(1)  // Every N periods
+  lastPmDate        DateTime?
+  nextPmDate        DateTime?
+  pmDuration        Int          @default(60) // Estimated minutes
+  
+  // Assignment
+  assignedToId      String?
+  assignedTo        User?        @relation(fields: [assignedToId], references: [id])
+  
+  // Status
+  status            EquipmentStatus @default(ACTIVE)
+  priority          Priority     @default(MEDIUM)
+  description       String?
+  specifications    Json?
+  images            String[]
+  documents         String[]
+  
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  deletedAt         DateTime?
+
+  // Relations
+  workOrders        WorkOrder[]
+  pmSchedules       PMSchedule[]
+  checklists        ChecklistTemplate[]
+  maintenanceHistory EquipmentMaintenance[]
+
+  @@index([equipmentId])
+  @@index([status])
+  @@index([categoryId])
+  @@index([nextPmDate])
+  @@map("equipment")
+}
+
+enum EquipmentStatus {
+  ACTIVE
+  UNDER_MAINTENANCE
+  FAULTY
+  OUT_OF_SERVICE
+  RETIRED
+  WARRANTY_EXPIRING  // Auto-set when warranty expires in 30 days
+}
+
+enum PMFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  SEMI_ANNUAL
+  ANNUAL
+  CUSTOM
+}
+
+model EquipmentMaintenance {
+  id            String   @id @default(uuid())
+  equipmentId   String
+  equipment     Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  workOrderId   String?
+  type          String
+  description   String
+  performedBy   String?
+  duration      Int?
+  cost          Float?
+  partsUsed     Json?
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  @@index([equipmentId])
+  @@map("equipment_maintenance")
+}
+
+// ============================================
 // WORK ORDER MANAGEMENT MODULE
 // ============================================
 
 model WorkOrder {
   id              String         @id @default(uuid())
-  woNumber        String         @unique
+  woNumber        String         @unique  // PPM-YYYY-XXXX format
   title           String
+  titleAr         String?        // Arabic title
   description     String?
   type            WorkOrderType  @default(CORRECTIVE)
   priority        Priority       @default(MEDIUM)
@@ -282,12 +485,18 @@ model WorkOrder {
   dueDate         DateTime?
   
   // Location
+  facilityId      String?
+  facility        Facility?      @relation(fields: [facilityId], references: [id])
   buildingId      String?
   building        Building?      @relation(fields: [buildingId], references: [id])
+  departmentId    String?
+  department      Department?    @relation(fields: [departmentId], references: [id])
   
-  // Asset
+  // Asset/Equipment
   assetId         String?
   asset           Asset?         @relation(fields: [assetId], references: [id])
+  equipmentId     String?
+  equipment       Equipment?     @relation(fields: [equipmentId], references: [id])
   
   // People
   requesterId     String?
@@ -297,21 +506,35 @@ model WorkOrder {
   completedById   String?
   completedBy     User?          @relation("CompletedBy", fields: [completedById], references: [id])
   
+  // Signatures
+  technicianSignatureId String?
+  technicianSignature   Signature? @relation("TechnicianSignature", fields: [technicianSignatureId], references: [id])
+  engineerSignatureId   String?
+  engineerSignature     Signature? @relation("EngineerSignature", fields: [engineerSignatureId], references: [id])
+  managerSignatureId    String?
+  managerSignature      Signature? @relation("ManagerSignature", fields: [managerSignatureId], references: [id])
+  
   // Tracking
   estimatedHours  Float?
   actualHours     Float?
+  startTime       DateTime?
+  endTime         DateTime?
   laborCost       Float?
   totalCost       Float?
   
   // Content
-  checklist       Json?
-  attachments     String[]
+  checklistResults ChecklistResult[]
+  sparePartsUsed  SparePartUsed[]
+  attachments     Attachment[]
   comments        WorkOrderComment[]
   activityTimeline ActivityTimeline[]
   
-  // Signatures
-  customerSignature String?
-  technicianSignature String?
+  // Problem reporting
+  problemDescription String?
+  problemPhotos      String[]
+  recommendations    String?
+  followUpRequired   Boolean @default(false)
+  followUpNotes      String?
   
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
@@ -323,6 +546,8 @@ model WorkOrder {
   @@index([priority])
   @@index([assignedToId])
   @@index([assetId])
+  @@index([equipmentId])
+  @@index([dueDate])
   @@map("work_orders")
 }
 
@@ -331,6 +556,7 @@ enum WorkOrderType {
   PREVENTIVE
   INSPECTION
   EMERGENCY
+  PPM  // Planned Preventive Maintenance
 }
 
 enum WorkOrderStatus {
@@ -342,13 +568,77 @@ enum WorkOrderStatus {
   COMPLETED
   CLOSED
   CANCELLED
+  NEEDS_FOLLOWUP
 }
 
-enum Priority {
-  LOW
-  MEDIUM
-  HIGH
-  URGENT
+model ChecklistTemplate {
+  id              String   @id @default(uuid())
+  name            String
+  description     String?
+  categoryId      String?
+  category        AssetCategory? @relation(fields: [categoryId], references: [id])
+  equipmentId     String?
+  equipment       Equipment? @relation(fields: [equipmentId], references: [id])
+  isDefault       Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items           ChecklistItem[]
+  workOrders      WorkOrder[]
+
+  @@map("checklist_templates")
+}
+
+model ChecklistItem {
+  id              String   @id @default(uuid())
+  templateId      String
+  template        ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  order           Int      @default(0)
+  description     String
+  descriptionAr   String?  // Arabic description
+  isRequired      Boolean  @default(true)
+  expectedAction  String?
+  category        String?  // e.g., "Clean", "Check", "Replace"
+  createdAt       DateTime @default(now())
+
+  results         ChecklistResult[]
+
+  @@index([templateId])
+  @@map("checklist_items")
+}
+
+model ChecklistResult {
+  id              String   @id @default(uuid())
+  workOrderId     String
+  workOrder       WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  checklistItemId String
+  // Store item snapshot in case template changes
+  itemDescription String
+  isRequired      Boolean  @default(true)
+  isDone          Boolean  @default(false)
+  actionTaken     String?
+  notes           String?
+  photos          String[]
+  completedAt     DateTime?
+
+  @@index([workOrderId])
+  @@map("checklist_results")
+}
+
+model SparePartUsed {
+  id              String   @id @default(uuid())
+  workOrderId     String
+  workOrder       WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  description     String
+  quantity        Int      @default(1)
+  partNumber      String?
+  inventoryItemId String?
+  cost            Float?
+  createdAt       DateTime @default(now())
+
+  @@index([workOrderId])
+  @@map("spare_parts_used")
 }
 
 model WorkOrderComment {
@@ -380,6 +670,21 @@ model ActivityTimeline {
   @@map("activity_timeline")
 }
 
+model Attachment {
+  id          String   @id @default(uuid())
+  workOrderId String
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  fileName    String
+  filePath    String
+  fileType    String
+  fileSize    Int
+  uploadedBy  String
+  createdAt   DateTime @default(now())
+
+  @@index([workOrderId])
+  @@map("attachments")
+}
+
 // ============================================
 // PREVENTIVE MAINTENANCE MODULE
 // ============================================
@@ -387,20 +692,21 @@ model ActivityTimeline {
 model PMTemplate {
   id              String   @id @default(uuid())
   name            String
+  nameAr          String?  // Arabic name
   description     String?
   categoryId      String?
   category        AssetCategory? @relation(fields: [categoryId], references: [id])
-  intervalType    IntervalType @default(DAILY)
+  intervalType    IntervalType @default(MONTHLY)
   intervalValue   Int      @default(1)
   estimatedDuration Int    @default(60)
   priority        Priority @default(MEDIUM)
-  checklist       Json?
   instructions    String?
   isActive        Boolean  @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   pmSchedules     PMSchedule[]
+  checklistItems  ChecklistItem[]
 
   @@map("pm_templates")
 }
@@ -410,6 +716,7 @@ enum IntervalType {
   WEEKLY
   MONTHLY
   QUARTERLY
+  SEMI_ANNUAL
   YEARLY
   CUSTOM
 }
@@ -418,8 +725,10 @@ model PMSchedule {
   id              String   @id @default(uuid())
   templateId      String?
   template        PMTemplate? @relation(fields: [templateId], references: [id])
-  assetId         String
-  asset           Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  assetId         String?
+  asset           Asset?    @relation(fields: [assetId], references: [id])
+  equipmentId     String?
+  equipment       Equipment? @relation(fields: [equipmentId], references: [id])
   name            String
   description     String?
   intervalType    IntervalType
@@ -429,13 +738,17 @@ model PMSchedule {
   status          PMScheduleStatus @default(ACTIVE)
   autoGenerateWO  Boolean  @default(true)
   assignedToId    String?
+  assignedTo      User?    @relation(fields: [assignedToId], references: [id])
   checklist       Json?
+  startDate       DateTime @default(now())
+  endDate         DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   generatedWorkOrders WorkOrder[]
 
   @@index([assetId])
+  @@index([equipmentId])
   @@index([nextDue])
   @@index([status])
   @@map("pm_schedules")
@@ -455,6 +768,7 @@ enum PMScheduleStatus {
 model Warehouse {
   id          String   @id @default(uuid())
   name        String
+  nameAr      String?  // Arabic name
   code        String   @unique
   address     String?
   manager     String?
@@ -475,6 +789,7 @@ model Supplier {
   contactName String?
   email       String?
   phone       String?
+  whatsapp    String?  // For notifications
   address     String?
   website     String?
   rating      Float?
@@ -491,6 +806,7 @@ model InventoryItem {
   id            String   @id @default(uuid())
   sku           String   @unique
   name          String
+  nameAr        String?  // Arabic name
   description   String?
   categoryId    String?
   category      AssetCategory? @relation(fields: [categoryId], references: [id])
@@ -527,6 +843,7 @@ model InventoryItem {
   updatedAt     DateTime @updatedAt
 
   stockMovements StockMovement[]
+  sparePartsUsed SparePartUsed[]
 
   @@index([sku])
   @@index([warehouseId])
@@ -571,9 +888,13 @@ model Notification {
   type       NotificationType
   title      String
   message    String
+  messageAr  String?  // Arabic message
   data       Json?
+  channel    NotificationChannel @default(IN_APP)
   isRead     Boolean  @default(false)
   readAt     DateTime?
+  sentAt     DateTime?
+  deliveredAt DateTime?
   createdAt  DateTime @default(now())
 
   @@index([userId])
@@ -585,12 +906,49 @@ enum NotificationType {
   WORK_ORDER_ASSIGNED
   WORK_ORDER_UPDATED
   WORK_ORDER_OVERDUE
+  PM_DUE_SOON        // Due in 3 days
   PM_DUE
   PM_OVERDUE
   INVENTORY_LOW
   INVENTORY_OUT_OF_STOCK
   ASSET_FAULTY
+  WARRANTY_EXPIRING  // 30 days warning
+  EQUIPMENT_BREAKDOWN
+  PROBLEM_REPORTED
+  TASK_COMPLETED
   GENERAL
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  WHATSAPP
+  SMS
+  PUSH
+}
+
+// WhatsApp notification log
+model WhatsAppLog {
+  id          String   @id @default(uuid())
+  phoneNumber String
+  message     String
+  status      WhatsAppStatus @default(PENDING)
+  messageId   String?
+  errorCode   String?
+  errorMessage String?
+  sentAt      DateTime @default(now())
+  deliveredAt DateTime?
+  readAt      DateTime?
+
+  @@map("whatsapp_logs")
+}
+
+enum WhatsAppStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
 }
 
 // ============================================
@@ -627,4 +985,45 @@ model ActivityLog {
   @@index([userId])
   @@index([module])
   @@map("activity_logs")
+}
+
+// ============================================
+// SYSTEM SETTINGS
+// ============================================
+
+model SystemSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  type        String   @default("string")
+  description String?
+  isPublic    Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+// Import tracking for Excel imports
+model ImportLog {
+  id          String   @id @default(uuid())
+  fileName    String
+  fileType    String   // excel, csv
+  totalRows   Int
+  successCount Int
+  errorCount  Int
+  skippedCount Int
+  status      ImportStatus @default(PROCESSING)
+  errorMessage String?
+  importedBy  String
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+
+  @@map("import_logs")
+}
+
+enum ImportStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+  PARTIAL
 }
